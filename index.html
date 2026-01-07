@@ -2,7 +2,7 @@
 <html lang="zh-TW">
 <head>
 <meta charset="UTF-8">
-<title>地鐵迷宮大冒險 - 全平台搖桿版</title>
+<title>地鐵迷宮大冒險 - 搖桿靈敏度版</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <style>
     body {
@@ -40,11 +40,40 @@
         text-align: center;
         color: #aaa;
         font-size: 14px;
+        position: relative;
+        width: 100%;
+        max-width: 640px;
+        display: flex;
+        justify-content: center;
+        align-items: center;
     }
     
-    /* --- 虛擬搖桿樣式 (現在電腦版也會顯示) --- */
+    /* --- 靈敏度調整器樣式 --- */
+    #sensitivity-box {
+        position: absolute;
+        top: -40px; /* 放在畫布上方 */
+        right: 0;
+        background: rgba(0, 0, 0, 0.6);
+        padding: 5px 10px;
+        border-radius: 15px;
+        border: 1px solid #555;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        pointer-events: auto;
+    }
+    #sensitivity-box label {
+        font-size: 14px;
+        color: #ffcc00;
+    }
+    input[type=range] {
+        width: 100px;
+        accent-color: #ffcc00; /* 滑桿顏色 */
+    }
+
+    /* --- 虛擬搖桿樣式 --- */
     #joystick-zone {
-        display: block; /* 強制顯示 */
+        display: block;
         position: absolute;
         bottom: 30px;
         left: 30px;
@@ -60,13 +89,13 @@
         border: 2px solid rgba(255, 255, 255, 0.3);
         border-radius: 50%;
         position: relative;
-        cursor: pointer; /* 讓電腦版滑鼠移過去變手指 */
+        cursor: pointer;
     }
 
     .joystick-stick {
         width: 50px;
         height: 50px;
-        background: rgba(255, 204, 0, 0.8); /* 亮黃色 */
+        background: rgba(255, 204, 0, 0.8);
         border-radius: 50%;
         position: absolute;
         top: 50%;
@@ -79,7 +108,7 @@
 
     /* Enter 按鈕樣式 */
     #mobile-btn-enter {
-        display: flex; /* 預設顯示 (在選單時) */
+        display: flex;
         position: absolute;
         bottom: 50px;
         right: 40px;
@@ -103,30 +132,34 @@
 </head>
 <body>
 
-<div id="game-container">
-    <canvas id="gameCanvas" width="640" height="480"></canvas>
-</div>
-
 <div id="ui-layer">
-    <p>滑鼠/手指拖曳左下角搖桿移動 | Enter 確認</p>
-</div>
-
-<div id="joystick-zone">
-    <div class="joystick-base">
-        <div class="joystick-stick" id="stick"></div>
+    <p>拖曳左下搖桿移動 | Enter 確認</p>
+    <div id="sensitivity-box">
+        <label for="speedSlider">靈敏度</label>
+        <input type="range" id="speedSlider" min="1" max="10" value="5">
+        <span id="speedValue">5</span>
     </div>
 </div>
 
-<div id="mobile-btn-enter">Enter</div>
+<div id="game-container">
+    <canvas id="gameCanvas" width="640" height="480"></canvas>
+    
+    <div id="joystick-zone">
+        <div class="joystick-base">
+            <div class="joystick-stick" id="stick"></div>
+        </div>
+    </div>
+
+    <div id="mobile-btn-enter">Enter</div>
+</div>
 
 <script>
 // --- 圖片資源 ---
-// 請確認圖片與 index.html 在同一資料夾，或路徑正確
 const charAImg = new Image();
-charAImg.src = 'CharAImg.png'; // 修正為相對路徑，請確保檔名大小寫一致
+charAImg.src = 'CharAImg.png'; 
 
 const charBImg = new Image();
-charBImg.src = 'charBImg.png'; // 修正為相對路徑
+charBImg.src = 'charBImg.png';
 
 // --- 遊戲變數 ---
 const canvas = document.getElementById('gameCanvas');
@@ -155,7 +188,7 @@ let camera = { x: 0, y: 0 };
 // 搖桿控制
 let joystickData = { active: false, x: 0, y: 0, dir: null };
 let lastMoveTime = 0;
-const MOVE_DELAY = 150; // 移動速度(毫秒)，越小越快
+let moveDelay = 150; // 預設移動延遲 (越小越快)
 
 const COLORS = {
     bg: '#000000', wall: '#4a4a4a', floor: '#1a1a1a', 
@@ -164,10 +197,8 @@ const COLORS = {
 
 // --- 初始化 ---
 function init() {
-    // 不論是否為手機，都初始化搖桿事件
     setupJoystickControls();
-    
-    // 雖然主要用搖桿，但保留鍵盤偵聽以備不時之需
+    setupSensitivityControl(); // 新增靈敏度控制
     document.addEventListener('keydown', (e) => handleInput(e.key));
 
     resizeCanvas();
@@ -184,95 +215,88 @@ function resizeCanvas() {
     canvasHeight = canvas.height;
 }
 
-// --- 搖桿與滑鼠控制核心 (修正版) ---
+// --- 靈敏度控制設定 ---
+function setupSensitivityControl() {
+    const slider = document.getElementById('speedSlider');
+    const valueDisplay = document.getElementById('speedValue');
+
+    // 更新速度函數
+    const updateSpeed = () => {
+        const val = parseInt(slider.value);
+        valueDisplay.textContent = val;
+        // 映射：數值 1 (慢, 延遲300ms) -> 數值 10 (快, 延遲30ms)
+        // 公式：330 - (val * 30)
+        moveDelay = 330 - (val * 30);
+    };
+
+    slider.addEventListener('input', updateSpeed);
+    updateSpeed(); // 初始化
+}
+
+// --- 搖桿與滑鼠控制 ---
 function setupJoystickControls() {
     const zone = document.querySelector('.joystick-base');
     const stick = document.getElementById('stick');
     const enterBtn = document.getElementById('mobile-btn-enter');
     
-    // Enter 按鈕 (支援滑鼠點擊與觸控)
-    const triggerEnter = (e) => {
-        e.preventDefault();
-        handleInput('Enter');
-    };
+    const triggerEnter = (e) => { e.preventDefault(); handleInput('Enter'); };
     enterBtn.addEventListener('mousedown', triggerEnter);
     enterBtn.addEventListener('touchstart', triggerEnter);
 
-    // --- 統一處理輸入座標 ---
     const getPointerPos = (e) => {
         if (e.touches) return { x: e.touches[0].clientX, y: e.touches[0].clientY };
         return { x: e.clientX, y: e.clientY };
     };
 
-    // --- 開始拖曳 ---
     const startDrag = (e) => {
-        // 防止滑鼠選取到其他文字
         if (e.type === 'mousedown') e.preventDefault(); 
-        
         joystickData.active = true;
         updateStick(getPointerPos(e));
     };
 
-    // --- 拖曳中 ---
     const moveDrag = (e) => {
         if (joystickData.active) {
-            e.preventDefault(); // 防止手機滾動畫面
+            e.preventDefault(); 
             updateStick(getPointerPos(e));
         }
     };
 
-    // --- 結束拖曳 ---
     const endDrag = (e) => {
         if (!joystickData.active) return;
         e.preventDefault();
         joystickData.active = false;
         joystickData.dir = null;
-        // 搖桿歸位
         stick.style.transform = `translate(-50%, -50%)`; 
         stick.style.transition = 'transform 0.1s';
     };
 
-    // 綁定觸控事件 (手機)
     zone.addEventListener('touchstart', startDrag, {passive: false});
-    document.addEventListener('touchmove', moveDrag, {passive: false}); // 綁在 document 避免滑出範圍失效
+    document.addEventListener('touchmove', moveDrag, {passive: false});
     document.addEventListener('touchend', endDrag, {passive: false});
-
-    // 綁定滑鼠事件 (電腦)
     zone.addEventListener('mousedown', startDrag);
-    document.addEventListener('mousemove', moveDrag); // 綁在 document 避免滑出範圍失效
+    document.addEventListener('mousemove', moveDrag);
     document.addEventListener('mouseup', endDrag);
 
-    // 計算搖桿位置與方向
     function updateStick(pos) {
         const rect = zone.getBoundingClientRect();
         const centerX = rect.width / 2;
         const centerY = rect.height / 2;
-        
-        // 計算游標相對於圓心的位置
         let x = pos.x - rect.left - centerX;
         let y = pos.y - rect.top - centerY;
-        
         const maxRadius = rect.width / 2 - 25; 
         const distance = Math.sqrt(x*x + y*y);
         
-        // 限制在圓圈內
         if (distance > maxRadius) {
             const ratio = maxRadius / distance;
-            x *= ratio;
-            y *= ratio;
+            x *= ratio; y *= ratio;
         }
 
-        // 移動搖桿頭
         stick.style.transition = 'none';
         stick.style.transform = `translate(calc(-50% + ${x}px), calc(-50% + ${y}px))`;
 
-        // 判斷方向 (4向)
-        if (distance > 10) { // 死區
-            if (Math.abs(x) > Math.abs(y)) {
-                joystickData.dir = x > 0 ? 'ArrowRight' : 'ArrowLeft';
-            } else {
-                joystickData.dir = y > 0 ? 'ArrowDown' : 'ArrowUp';
-            }
+        if (distance > 10) { 
+            if (Math.abs(x) > Math.abs(y)) joystickData.dir = x > 0 ? 'ArrowRight' : 'ArrowLeft';
+            else joystickData.dir = y > 0 ? 'ArrowDown' : 'ArrowUp';
         } else {
             joystickData.dir = null;
         }
@@ -281,52 +305,38 @@ function setupJoystickControls() {
 
 // --- 遊戲主迴圈 ---
 function gameLoop() {
-    // 處理搖桿連續移動
+    // 處理搖桿連續移動 (使用 moveDelay)
     if (joystickData.active && joystickData.dir) {
         const now = Date.now();
-        if (now - lastMoveTime > MOVE_DELAY) {
+        if (now - lastMoveTime > moveDelay) {
             handleInput(joystickData.dir);
             lastMoveTime = now;
         }
     }
 
-    // 更新 UI 狀態 (Enter鍵隱藏/顯示)
     updateUIElements();
 
-    // 繪圖與邏輯
     ctx.fillStyle = COLORS.bg;
     ctx.fillRect(0, 0, canvasWidth, canvasHeight);
 
     switch (currentState) {
-        case STATE.MENU:
-            drawMenu();
-            break;
-        case STATE.MAZE_SELECT:
-            drawMazeSelect();
-            break;
+        case STATE.MENU: drawMenu(); break;
+        case STATE.MAZE_SELECT: drawMazeSelect(); break;
         case STATE.PLAYING:
-            updateCamera(); // 持續更新攝影機
+            updateCamera(); 
             drawGame();
             updateTimerUI();
             break;
-        case STATE.GAMEOVER:
-            drawGameOver(false);
-            break;
-        case STATE.WIN:
-            drawGameOver(true);
-            break;
+        case STATE.GAMEOVER: drawGameOver(false); break;
+        case STATE.WIN: drawGameOver(true); break;
     }
     requestAnimationFrame(gameLoop);
 }
 
 function updateUIElements() {
     const enterBtn = document.getElementById('mobile-btn-enter');
-    // 遊戲中隱藏 Enter，其他時候顯示
-    if (currentState === STATE.PLAYING) {
-        enterBtn.style.display = 'none';
-    } else {
-        enterBtn.style.display = 'flex';
-    }
+    if (currentState === STATE.PLAYING) enterBtn.style.display = 'none';
+    else enterBtn.style.display = 'flex';
 }
 
 // --- 輸入處理 ---
@@ -342,20 +352,16 @@ function handleInput(key) {
         if (key === 'Enter') startGame();
     }
     else if (currentState === STATE.PLAYING) {
-        let nextX = player.x;
-        let nextY = player.y;
-
+        let nextX = player.x; let nextY = player.y;
         if (key === 'ArrowUp') nextY--;
         if (key === 'ArrowDown') nextY++;
         if (key === 'ArrowLeft') nextX--;
         if (key === 'ArrowRight') nextX++;
 
-        // 碰撞檢測與移動
         if (nextX >= 0 && nextX < cols && nextY >= 0 && nextY < rows) {
             let cell = grid[nextY][nextX];
             if (!cell.walls) {
-                player.x = nextX;
-                player.y = nextY;
+                player.x = nextX; player.y = nextY;
                 checkEvents();
             }
         }
@@ -367,39 +373,26 @@ function handleInput(key) {
 
 // --- 遊戲邏輯 ---
 function startGame() {
-    if (selectedMazeType === 'MAZE1') {
-        cellSize = 30; cols = 40; rows = 40;
-        generateSquareMaze();
-    } else {
-        cellSize = 30; cols = 40; rows = 40;
-        generateCircularMaze();
-    }
+    if (selectedMazeType === 'MAZE1') { cellSize = 30; cols = 40; rows = 40; generateSquareMaze(); } 
+    else { cellSize = 30; cols = 40; rows = 40; generateCircularMaze(); }
     spawnItems();
-    score = 0;
-    timeLeft = 180;
-    currentState = STATE.PLAYING;
+    score = 0; timeLeft = 180; currentState = STATE.PLAYING;
     
-    // *** 重要修正：強制攝影機瞬間定位到主角 ***
-    // 這樣遊戲開始的第一幀，主角就會在正中間，不會消失
+    // 強制攝影機定位
     let targetX = player.x * cellSize + cellSize / 2 - canvasWidth / 2;
     let targetY = player.y * cellSize + cellSize / 2 - canvasHeight / 2;
-    camera.x = targetX;
-    camera.y = targetY;
+    camera.x = targetX; camera.y = targetY;
 
     if (timerInterval) clearInterval(timerInterval);
     timerInterval = setInterval(() => {
         timeLeft--;
-        if (timeLeft <= 0) {
-            currentState = STATE.GAMEOVER;
-            clearInterval(timerInterval);
-        }
+        if (timeLeft <= 0) { currentState = STATE.GAMEOVER; clearInterval(timerInterval); }
     }, 1000);
 }
 
 function updateCamera() {
     let targetX = player.x * cellSize + cellSize / 2 - canvasWidth / 2;
     let targetY = player.y * cellSize + cellSize / 2 - canvasHeight / 2;
-    // 平滑移動
     camera.x += (targetX - camera.x) * 0.1;
     camera.y += (targetY - camera.y) * 0.1;
 }
@@ -407,13 +400,11 @@ function updateCamera() {
 function checkEvents() {
     for (let i = 0; i < items.length; i++) {
         if (items[i].active && items[i].x === player.x && items[i].y === player.y) {
-            items[i].active = false;
-            score += 100;
+            items[i].active = false; score += 100;
         }
     }
     if (player.x === exit.x && player.y === exit.y) {
-        currentState = STATE.WIN;
-        clearInterval(timerInterval);
+        currentState = STATE.WIN; clearInterval(timerInterval);
     }
 }
 
@@ -422,235 +413,104 @@ function spawnItems() {
     let count = 15;
     for(let i=0; i<count; i++) {
         let rx, ry;
-        do {
-            rx = Math.floor(Math.random() * cols);
-            ry = Math.floor(Math.random() * rows);
+        do { rx = Math.floor(Math.random() * cols); ry = Math.floor(Math.random() * rows);
         } while (grid[ry][rx].walls || (rx === player.x && ry === player.y) || (rx === exit.x && ry === exit.y));
         let type = Math.floor(Math.random() * 3);
         items.push({x: rx, y: ry, type: type, active: true});
     }
 }
 
-function resetGame() {
-    currentState = STATE.MENU;
-    selectedChar = null;
-}
+function resetGame() { currentState = STATE.MENU; selectedChar = null; }
 
 // --- 繪圖函數 ---
 function drawMenu() {
-    ctx.textAlign = 'center';
-    ctx.fillStyle = COLORS.uiText;
-    ctx.font = '24px monospace';
-    ctx.fillText("媽媽的地鐵迷宮冒險", canvasWidth/2, 80);
-    ctx.font = '16px monospace';
-    ctx.fillText("請選擇角色 (使用搖桿)", canvasWidth/2, 130);
-
-    let drawX = canvasWidth / 2 - 120;
-    let drawY = 180;
-    let size = 80;
-
-    ctx.strokeStyle = selectedChar === 'A' ? COLORS.highlight : '#555';
-    ctx.lineWidth = 4;
-    ctx.strokeRect(drawX, drawY, size, size);
-    drawCharacter(drawX + size/2, drawY + size/2, 'A', size * 0.8);
-
+    ctx.textAlign = 'center'; ctx.fillStyle = COLORS.uiText;
+    ctx.font = '24px monospace'; ctx.fillText("媽媽的地鐵迷宮冒險", canvasWidth/2, 80);
+    ctx.font = '16px monospace'; ctx.fillText("請選擇角色 (使用搖桿)", canvasWidth/2, 130);
+    let drawX = canvasWidth / 2 - 120; let drawY = 180; let size = 80;
+    ctx.strokeStyle = selectedChar === 'A' ? COLORS.highlight : '#555'; ctx.lineWidth = 4;
+    ctx.strokeRect(drawX, drawY, size, size); drawCharacter(drawX + size/2, drawY + size/2, 'A', size * 0.8);
     ctx.strokeStyle = selectedChar === 'B' ? COLORS.highlight : '#555';
-    ctx.strokeRect(drawX + 160, drawY, size, size);
-    drawCharacter(drawX + 160 + size/2, drawY + size/2, 'B', size * 0.8);
-
+    ctx.strokeRect(drawX + 160, drawY, size, size); drawCharacter(drawX + 160 + size/2, drawY + size/2, 'B', size * 0.8);
     if(selectedChar) {
-         ctx.fillStyle = COLORS.highlight;
-         ctx.fillText(`已選擇: 媽媽 ${selectedChar}`, canvasWidth/2, 320);
-         ctx.fillStyle = '#fff';
-         ctx.fillText("按 Enter 開始選關", canvasWidth/2, 350);
+         ctx.fillStyle = COLORS.highlight; ctx.fillText(`已選擇: 媽媽 ${selectedChar}`, canvasWidth/2, 320);
+         ctx.fillStyle = '#fff'; ctx.fillText("按 Enter 開始選關", canvasWidth/2, 350);
     }
 }
-
 function drawMazeSelect() {
-    ctx.textAlign = 'center';
-    ctx.fillStyle = COLORS.uiText;
-    ctx.font = '24px monospace';
-    ctx.fillText("選擇迷宮關卡", canvasWidth/2, 120);
-    
+    ctx.textAlign = 'center'; ctx.fillStyle = COLORS.uiText;
+    ctx.font = '24px monospace'; ctx.fillText("選擇迷宮關卡", canvasWidth/2, 120);
     ctx.font = '20px monospace';
-    ctx.fillStyle = selectedMazeType === 'MAZE1' ? COLORS.highlight : '#777';
-    ctx.fillText("關卡 1 (方形迷宮)", canvasWidth/2, 200);
-    
-    ctx.fillStyle = selectedMazeType === 'MAZE2' ? COLORS.highlight : '#777';
-    ctx.fillText("關卡 2 (圓形迷宮)", canvasWidth/2, 250);
-    
-    ctx.fillStyle = '#fff';
-    ctx.font = '16px monospace';
-    ctx.fillText("按 Enter 開始遊戲", canvasWidth/2, 350);
+    ctx.fillStyle = selectedMazeType === 'MAZE1' ? COLORS.highlight : '#777'; ctx.fillText("關卡 1 (方形迷宮)", canvasWidth/2, 200);
+    ctx.fillStyle = selectedMazeType === 'MAZE2' ? COLORS.highlight : '#777'; ctx.fillText("關卡 2 (圓形迷宮)", canvasWidth/2, 250);
+    ctx.fillStyle = '#fff'; ctx.font = '16px monospace'; ctx.fillText("按 Enter 開始遊戲", canvasWidth/2, 350);
 }
-
 function drawGame() {
-    ctx.save();
-    ctx.translate(-camera.x, -camera.y);
-
-    let startCol = Math.floor(camera.x / cellSize) - 1;
-    let startRow = Math.floor(camera.y / cellSize) - 1;
-    let endCol = startCol + Math.ceil(canvasWidth / cellSize) + 2;
-    let endRow = startRow + Math.ceil(canvasHeight / cellSize) + 2;
-    startCol = Math.max(0, startCol); startRow = Math.max(0, startRow);
-    endCol = Math.min(cols, endCol); endRow = Math.min(rows, endRow);
-
+    ctx.save(); ctx.translate(-camera.x, -camera.y);
+    let startCol = Math.floor(camera.x / cellSize) - 1; let startRow = Math.floor(camera.y / cellSize) - 1;
+    let endCol = startCol + Math.ceil(canvasWidth / cellSize) + 2; let endRow = startRow + Math.ceil(canvasHeight / cellSize) + 2;
+    startCol = Math.max(0, startCol); startRow = Math.max(0, startRow); endCol = Math.min(cols, endCol); endRow = Math.min(rows, endRow);
     for (let y = startRow; y < endRow; y++) {
         for (let x = startCol; x < endCol; x++) {
-            let px = x * cellSize;
-            let py = y * cellSize;
+            let px = x * cellSize; let py = y * cellSize;
             if (grid[y][x].walls) {
-                ctx.fillStyle = COLORS.wall;
-                ctx.fillRect(px, py, cellSize, cellSize);
-                ctx.strokeStyle = '#333'; ctx.lineWidth = 1;
-                ctx.strokeRect(px, py, cellSize, cellSize);
-            } else {
-                ctx.fillStyle = COLORS.floor;
-                ctx.fillRect(px, py, cellSize, cellSize);
-            }
+                ctx.fillStyle = COLORS.wall; ctx.fillRect(px, py, cellSize, cellSize);
+                ctx.strokeStyle = '#333'; ctx.lineWidth = 1; ctx.strokeRect(px, py, cellSize, cellSize);
+            } else { ctx.fillStyle = COLORS.floor; ctx.fillRect(px, py, cellSize, cellSize); }
         }
     }
-    // 出口
-    ctx.fillStyle = COLORS.exit;
-    ctx.beginPath(); ctx.arc(exit.x * cellSize + cellSize/2, exit.y * cellSize + cellSize/2, cellSize/2, 0, Math.PI*2); ctx.fill();
-    ctx.fillStyle = '#000'; ctx.font = `bold ${cellSize/2}px monospace`; ctx.textAlign = 'center';
-    ctx.fillText("EXIT", exit.x * cellSize + cellSize/2, exit.y * cellSize + cellSize*0.6);
-
-    // 物品
-    for (let item of items) {
-        if (item.active) drawItem(item.x * cellSize + cellSize/2, item.y * cellSize + cellSize/2, item.type, cellSize/2);
-    }
-    // 玩家
+    ctx.fillStyle = COLORS.exit; ctx.beginPath(); ctx.arc(exit.x * cellSize + cellSize/2, exit.y * cellSize + cellSize/2, cellSize/2, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#000'; ctx.font = `bold ${cellSize/2}px monospace`; ctx.textAlign = 'center'; ctx.fillText("EXIT", exit.x * cellSize + cellSize/2, exit.y * cellSize + cellSize*0.6);
+    for (let item of items) { if (item.active) drawItem(item.x * cellSize + cellSize/2, item.y * cellSize + cellSize/2, item.type, cellSize/2); }
     drawCharacter(player.x * cellSize + cellSize/2, player.y * cellSize + cellSize/2, selectedChar, cellSize);
     ctx.restore();
 }
-
 function drawItem(x, y, type, size) {
-    if (type === 0) {
-        ctx.fillStyle = '#33ccff'; ctx.fillRect(x-size/2, y-size/4, size, size/2); ctx.strokeStyle='#fff'; ctx.strokeRect(x-size/2, y-size/4, size, size/2);
-    } else if (type === 1) {
-        ctx.fillStyle = '#ffd700'; ctx.beginPath(); ctx.arc(x, y, size/2, 0, Math.PI*2); ctx.fill(); ctx.fillStyle = '#000'; ctx.beginPath(); ctx.arc(x, y, size/4, 0, Math.PI*2); ctx.fill();
-    } else {
-        ctx.fillStyle = '#e6e6fa'; ctx.beginPath(); ctx.moveTo(x, y-size/2); ctx.lineTo(x+size/2, y); ctx.lineTo(x, y+size/2); ctx.lineTo(x-size/2, y); ctx.fill();
-    }
+    if (type === 0) { ctx.fillStyle = '#33ccff'; ctx.fillRect(x-size/2, y-size/4, size, size/2); ctx.strokeStyle='#fff'; ctx.strokeRect(x-size/2, y-size/4, size, size/2); } 
+    else if (type === 1) { ctx.fillStyle = '#ffd700'; ctx.beginPath(); ctx.arc(x, y, size/2, 0, Math.PI*2); ctx.fill(); ctx.fillStyle = '#000'; ctx.beginPath(); ctx.arc(x, y, size/4, 0, Math.PI*2); ctx.fill(); } 
+    else { ctx.fillStyle = '#e6e6fa'; ctx.beginPath(); ctx.moveTo(x, y-size/2); ctx.lineTo(x+size/2, y); ctx.lineTo(x, y+size/2); ctx.lineTo(x-size/2, y); ctx.fill(); }
 }
-
 function drawCharacter(x, y, charType, size) {
     let img = charType === 'A' ? charAImg : charBImg;
-    if (img.complete && img.naturalWidth !== 0) {
-        ctx.drawImage(img, x - size/2, y - size/2, size, size);
-    } else {
-        // 圖片載入失敗時的備用色塊
-        ctx.fillStyle = charType === 'A' ? '#ff69b4' : '#4169e1';
-        ctx.fillRect(x - size/2, y - size/2, size, size);
-    }
+    if (img.complete && img.naturalWidth !== 0) { ctx.drawImage(img, x - size/2, y - size/2, size, size); } 
+    else { ctx.fillStyle = charType === 'A' ? '#ff69b4' : '#4169e1'; ctx.fillRect(x - size/2, y - size/2, size, size); }
 }
-
 function drawGameOver(win) {
-    ctx.fillStyle = 'rgba(0,0,0,0.8)';
-    ctx.fillRect(0, 0, canvasWidth, canvasHeight);
-    
-    ctx.textAlign = 'center';
-    ctx.fillStyle = win ? COLORS.exit : '#FF0000';
-    ctx.font = '32px monospace';
-    
+    ctx.fillStyle = 'rgba(0,0,0,0.8)'; ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+    ctx.textAlign = 'center'; ctx.fillStyle = win ? COLORS.exit : '#FF0000'; ctx.font = '32px monospace';
     if (win) {
-        ctx.fillText("恭喜過關!", canvasWidth/2, 180);
-        ctx.fillStyle = '#fff';
-        ctx.font = '20px monospace';
-        ctx.fillText(`收集分數: ${score}`, canvasWidth/2, 230);
-        ctx.fillText(`剩餘時間: ${timeLeft}秒`, canvasWidth/2, 260);
-    } else {
-        ctx.fillText("時間到 / 失敗!", canvasWidth/2, 180);
-    }
-    
-    ctx.fillStyle = '#fff';
-    ctx.font = '20px monospace';
-    ctx.fillText("按 Enter 回到選單", canvasWidth/2, 330);
+        ctx.fillText("恭喜過關!", canvasWidth/2, 180); ctx.fillStyle = '#fff'; ctx.font = '20px monospace';
+        ctx.fillText(`收集分數: ${score}`, canvasWidth/2, 230); ctx.fillText(`剩餘時間: ${timeLeft}秒`, canvasWidth/2, 260);
+    } else { ctx.fillText("時間到 / 失敗!", canvasWidth/2, 180); }
+    ctx.fillStyle = '#fff'; ctx.font = '20px monospace'; ctx.fillText("按 Enter 回到選單", canvasWidth/2, 330);
 }
-
 function updateTimerUI() {
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-    ctx.fillRect(0, 0, canvasWidth, 40);
-    ctx.fillStyle = '#fff';
-    ctx.font = '16px monospace';
-    ctx.textAlign = 'left';
-    
-    let m = Math.floor(timeLeft / 60);
-    let s = timeLeft % 60;
-    let timeStr = `${m}:${s < 10 ? '0'+s : s}`;
-    
-    ctx.fillText(`TIME: ${timeStr}`, 20, 25);
-    ctx.textAlign = 'right';
-    ctx.fillText(`SCORE: ${score}`, canvasWidth - 20, 25);
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)'; ctx.fillRect(0, 0, canvasWidth, 40);
+    ctx.fillStyle = '#fff'; ctx.font = '16px monospace'; ctx.textAlign = 'left';
+    let m = Math.floor(timeLeft / 60); let s = timeLeft % 60; let timeStr = `${m}:${s < 10 ? '0'+s : s}`;
+    ctx.fillText(`TIME: ${timeStr}`, 20, 25); ctx.textAlign = 'right'; ctx.fillText(`SCORE: ${score}`, canvasWidth - 20, 25);
 }
 
-// --- 迷宮生成 (Square) ---
+// --- 迷宮生成 ---
 function generateSquareMaze() {
-    initGrid();
-    let stack = [];
-    let startX = 1, startY = 1;
-    grid[startY][startX].visited = true; grid[startY][startX].walls = false;
-    stack.push({x: startX, y: startY});
+    initGrid(); let stack = []; let startX = 1, startY = 1; grid[startY][startX].visited = true; grid[startY][startX].walls = false; stack.push({x: startX, y: startY});
     while(stack.length > 0) {
-        let current = stack.pop();
-        let neighbors = [];
-        let dirs = [[0,-2], [0,2], [-2,0], [2,0]];
-        for(let dir of dirs) {
-            let nx = current.x + dir[0];
-            let ny = current.y + dir[1];
-            if(nx > 0 && nx < cols-1 && ny > 0 && ny < rows-1 && !grid[ny][nx].visited) {
-                neighbors.push({x: nx, y: ny, dx: dir[0]/2, dy: dir[1]/2});
-            }
-        }
-        if(neighbors.length > 0) {
-            stack.push(current);
-            let next = neighbors[Math.floor(Math.random() * neighbors.length)];
-            grid[current.y + next.dy][current.x + next.dx].walls = false;
-            grid[next.y][next.x].visited = true; grid[next.y][next.x].walls = false;
-            stack.push({x: next.x, y: next.y});
-        }
+        let current = stack.pop(); let neighbors = []; let dirs = [[0,-2], [0,2], [-2,0], [2,0]];
+        for(let dir of dirs) { let nx = current.x + dir[0]; let ny = current.y + dir[1]; if(nx > 0 && nx < cols-1 && ny > 0 && ny < rows-1 && !grid[ny][nx].visited) neighbors.push({x: nx, y: ny, dx: dir[0]/2, dy: dir[1]/2}); }
+        if(neighbors.length > 0) { stack.push(current); let next = neighbors[Math.floor(Math.random() * neighbors.length)]; grid[current.y + next.dy][current.x + next.dx].walls = false; grid[next.y][next.x].visited = true; grid[next.y][next.x].walls = false; stack.push({x: next.x, y: next.y}); }
     }
-    player.x = Math.floor(cols / 2); player.y = 1; grid[player.y][player.x].walls = false;
-    exit.x = Math.floor(cols / 2); exit.y = rows - 2; grid[exit.y][exit.x].walls = false;
+    player.x = Math.floor(cols / 2); player.y = 1; grid[player.y][player.x].walls = false; exit.x = Math.floor(cols / 2); exit.y = rows - 2; grid[exit.y][exit.x].walls = false;
 }
-
-// --- 迷宮生成 (Circular) ---
 function generateCircularMaze() {
-    initGrid();
-    let centerX = Math.floor(cols / 2); let centerY = Math.floor(rows / 2);
-    let maxRadius = Math.min(centerX, centerY) - 2;
-    for (let y = 0; y < rows; y++) {
-        for (let x = 0; x < cols; x++) {
-            let dist = Math.sqrt((x - centerX)**2 + (y - centerY)**2);
-            if (dist <= maxRadius) grid[y][x].walls = false;
-        }
-    }
-    for (let y = 2; y < rows - 2; y++) {
-        for (let x = 2; x < cols - 2; x++) {
-             let dist = Math.sqrt((x - centerX)**2 + (y - centerY)**2);
-             if (dist < maxRadius - 2 && dist > 3 && Math.random() > 0.7) grid[y][x].walls = true;
-        }
-    }
-    player.x = centerX; player.y = centerY;
-    for(let dy=-1; dy<=1; dy++) for(let dx=-1; dx<=1; dx++) grid[centerY+dy][centerX+dx].walls = false;
-    let angle = Math.random() * Math.PI * 2;
-    exit.x = Math.floor(centerX + Math.cos(angle) * (maxRadius - 1));
-    exit.y = Math.floor(centerY + Math.sin(angle) * (maxRadius - 1));
-    grid[exit.y][exit.x].walls = false;
+    initGrid(); let centerX = Math.floor(cols / 2); let centerY = Math.floor(rows / 2); let maxRadius = Math.min(centerX, centerY) - 2;
+    for (let y = 0; y < rows; y++) { for (let x = 0; x < cols; x++) { let dist = Math.sqrt((x - centerX)**2 + (y - centerY)**2); if (dist <= maxRadius) grid[y][x].walls = false; } }
+    for (let y = 2; y < rows - 2; y++) { for (let x = 2; x < cols - 2; x++) { let dist = Math.sqrt((x - centerX)**2 + (y - centerY)**2); if (dist < maxRadius - 2 && dist > 3 && Math.random() > 0.7) grid[y][x].walls = true; } }
+    player.x = centerX; player.y = centerY; for(let dy=-1; dy<=1; dy++) for(let dx=-1; dx<=1; dx++) grid[centerY+dy][centerX+dx].walls = false;
+    let angle = Math.random() * Math.PI * 2; exit.x = Math.floor(centerX + Math.cos(angle) * (maxRadius - 1)); exit.y = Math.floor(centerY + Math.sin(angle) * (maxRadius - 1)); grid[exit.y][exit.x].walls = false;
 }
-
-function initGrid() {
-    grid = [];
-    for (let y = 0; y < rows; y++) {
-        let row = [];
-        for (let x = 0; x < cols; x++) { row.push({ walls: true, visited: false }); }
-        grid.push(row);
-    }
-}
+function initGrid() { grid = []; for (let y = 0; y < rows; y++) { let row = []; for (let x = 0; x < cols; x++) { row.push({ walls: true, visited: false }); } grid.push(row); } }
 
 init();
-
 </script>
 </body>
 </html>
