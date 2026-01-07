@@ -1,0 +1,636 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<title>地鐵迷宮大冒險 - 手機卷軸版</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<style>
+    body {
+        background-color: #202020;
+        color: white;
+        font-family: 'Courier New', Courier, monospace;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        height: 100vh;
+        margin: 0;
+        overflow: hidden;
+        touch-action: none; /* 防止雙擊縮放等預設行為 */
+    }
+    #game-container {
+        position: relative;
+        width: 640px;
+        height: 640px;
+    }
+    canvas {
+        background-color: #000;
+        border: 4px solid #555;
+        image-rendering: pixelated;
+        box-shadow: 0 0 20px rgba(0,0,0,0.8);
+        width: 100%; /* 讓 canvas 適應容器寬度 */
+        height: 100%; /* 讓 canvas 適應容器高度 */
+        display: block; /* 移除 canvas底部的空白 */
+    }
+    #ui-layer {
+        margin-top: 10px;
+        text-align: center;
+        display: none; /* 手機版預設隱藏鍵盤提示 */
+    }
+    /* 手機虛擬按鍵樣式 */
+    #mobile-controls {
+        display: none; /* 預設隱藏，在 JS 中判斷是否為手機後顯示 */
+        position: absolute;
+        bottom: 20px;
+        left: 20px;
+        flex-direction: column;
+        align-items: center;
+    }
+    .control-row {
+        display: flex;
+    }
+    .control-btn {
+        width: 60px;
+        height: 60px;
+        background-color: rgba(255, 255, 255, 0.3);
+        border: 2px solid rgba(255, 255, 255, 0.5);
+        border-radius: 50%;
+        margin: 5px;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        font-size: 24px;
+        color: white;
+        user-select: none;
+        touch-action: manipulation; /* 優化觸控 */
+    }
+    .control-btn:active {
+        background-color: rgba(255, 255, 255, 0.5);
+    }
+    #btn-enter {
+        position: absolute;
+        bottom: 20px;
+        right: 20px;
+        width: 80px;
+        height: 80px;
+        border-radius: 50%;
+        font-size: 20px;
+    }
+
+    /* 針對小螢幕手機的調整 */
+    @media (max-width: 680px) {
+        #game-container {
+            width: 95vw;
+            height: 95vw; /* 保持 4:3 比例 */
+        }
+        .control-btn {
+            width: 50px;
+            height: 50px;
+            font-size: 20px;
+        }
+        #btn-enter {
+            width: 30px;
+            height: 30px;
+            font-size: 20px;
+        }
+    }
+</style>
+</head>
+<body>
+
+<div id="game-container">
+    <canvas id="gameCanvas" width="640" height="480"></canvas>
+</div>
+
+<div id="ui-layer">
+    <p>控制: ↑ ↓ ← → | Enter 確定</p>
+</div>
+
+<div id="mobile-controls">
+    <div class="control-row">
+        <div class="control-btn" id="btn-up">↑</div>
+    </div>
+    <div class="control-row">
+        <div class="control-btn" id="btn-left">←</div>
+        <div class="control-btn" id="btn-down">↓</div>
+        <div class="control-btn" id="btn-right">→</div>
+    </div>
+</div>
+<div id="mobile-controls-right" style="display: none; position: absolute; bottom: 20px; right: 20px;">
+    <div class="control-btn" id="btn-enter">Enter</div>
+</div>
+
+<script>
+// --- 圖片資源載入 ---
+const charAImg = new Image();
+// 使用 Base64 編碼的佔位圖片，請替換為您的 image_0.png
+charAImg.src = 'CharAImg.png';
+
+const charBImg = new Image();
+// 使用 Base64 編碼的佔位圖片，請替換為您的 image_3.png
+charBImg.src = 'charBImg.png';
+
+// --- 遊戲設定與變數 ---
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+let canvasWidth = canvas.width;
+let canvasHeight = canvas.height;
+
+// 遊戲狀態
+const STATE = {
+    MENU: 0,
+    MAZE_SELECT: 1, // 改為迷宮選擇
+    PLAYING: 2,
+    GAMEOVER: 3,
+    WIN: 4
+};
+
+let currentState = STATE.MENU;
+let selectedChar = null;
+let selectedMazeType = 'MAZE1'; // 'MAZE1' (方形) or 'MAZE2' (圓形)
+let score = 0;
+let timeLeft = 180;
+let timerInterval = null;
+
+// 迷宮與攝影機設定
+let cellSize = 40;
+let cols, rows;
+let grid = [];
+let player = { x: 0, y: 0 };
+let exit = { x: 0, y: 0 };
+let items = [];
+let camera = { x: 0, y: 0 }; // 攝影機左上角座標
+
+// 8-bit 調色盤
+const COLORS = {
+    bg: '#000000',
+    wall: '#4a4a4a',
+    floor: '#1a1a1a',
+    uiText: '#ffffff',
+    highlight: '#ffcc00',
+    exit: '#00FF00'
+};
+
+// --- 遊戲初始化與迴圈 ---
+function init() {
+    // 偵測是否為行動裝置
+    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+    if (isMobile) {
+        document.getElementById('mobile-controls').style.display = 'flex';
+        document.getElementById('mobile-controls-right').style.display = 'block';
+        document.getElementById('ui-layer').style.display = 'none';
+        setupMobileControls();
+    } else {
+        document.getElementById('ui-layer').style.display = 'block';
+        document.addEventListener('keydown', handleKeyDown);
+    }
+
+    // 調整 canvas 大小以適應容器 (響應式)
+    resizeCanvas();
+    window.addEventListener('resize', resizeCanvas);
+
+    gameLoop();
+}
+
+function resizeCanvas() {
+    const container = document.getElementById('game-container');
+    canvas.width = container.clientWidth;
+    canvas.height = container.clientHeight;
+    canvasWidth = canvas.width;
+    canvasHeight = canvas.height;
+}
+
+function setupMobileControls() {
+    const setupBtn = (id, key) => {
+        const btn = document.getElementById(id);
+        btn.addEventListener('touchstart', (e) => { e.preventDefault(); handleInput(key); });
+    };
+    setupBtn('btn-up', 'ArrowUp');
+    setupBtn('btn-down', 'ArrowDown');
+    setupBtn('btn-left', 'ArrowLeft');
+    setupBtn('btn-right', 'ArrowRight');
+    setupBtn('btn-enter', 'Enter');
+}
+
+function handleKeyDown(e) {
+    handleInput(e.key);
+}
+
+function gameLoop() {
+    ctx.fillStyle = COLORS.bg;
+    ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+
+    switch (currentState) {
+        case STATE.MENU:
+            drawMenu();
+            break;
+        case STATE.MAZE_SELECT:
+            drawMazeSelect();
+            break;
+        case STATE.PLAYING:
+            updateCamera();
+            drawGame();
+            updateTimerUI();
+            break;
+        case STATE.GAMEOVER:
+            drawGameOver(false);
+            break;
+        case STATE.WIN:
+            drawGameOver(true);
+            break;
+    }
+    requestAnimationFrame(gameLoop);
+}
+
+// --- 輸入控制 ---
+function handleInput(key) {
+    if (currentState === STATE.MENU) {
+        if (key === 'ArrowLeft') selectedChar = 'A';
+        if (key === 'ArrowRight') selectedChar = 'B';
+        if (key === 'Enter' && selectedChar) currentState = STATE.MAZE_SELECT;
+    } 
+    else if (currentState === STATE.MAZE_SELECT) {
+        if (key === 'ArrowUp') selectedMazeType = 'MAZE1';
+        if (key === 'ArrowDown') selectedMazeType = 'MAZE2';
+        if (key === 'Enter') startGame();
+    }
+    else if (currentState === STATE.PLAYING) {
+        let nextX = player.x;
+        let nextY = player.y;
+
+        if (key === 'ArrowUp') nextY--;
+        if (key === 'ArrowDown') nextY++;
+        if (key === 'ArrowLeft') nextX--;
+        if (key === 'ArrowRight') nextX++;
+
+        if (nextX >= 0 && nextX < cols && nextY >= 0 && nextY < rows) {
+            let cell = grid[nextY][nextX];
+            if (!cell.walls) {
+                player.x = nextX;
+                player.y = nextY;
+                checkEvents();
+            }
+        }
+    }
+    else if (currentState === STATE.GAMEOVER || currentState === STATE.WIN) {
+        if (key === 'Enter') resetGame();
+    }
+}
+
+// --- 邏輯處理 ---
+function startGame() {
+    // 根據選擇的迷宮類型設定
+    if (selectedMazeType === 'MAZE1') {
+        // 方形迷宮 (參考 Maze1.png) - 較大較複雜
+        cellSize = 30; 
+        cols = 40; 
+        rows = 40;
+        generateSquareMaze();
+    } else {
+        // 圓形迷宮 (參考 Maze2.png) - 中心起點
+        cellSize = 30;
+        cols = 40;
+        rows = 40;
+        generateCircularMaze();
+    }
+
+    spawnItems();
+
+    score = 0;
+    timeLeft = 180;
+    currentState = STATE.PLAYING;
+    
+    // 初始化攝影機位置
+    updateCamera();
+
+    if (timerInterval) clearInterval(timerInterval);
+    timerInterval = setInterval(() => {
+        timeLeft--;
+        if (timeLeft <= 0) {
+            currentState = STATE.GAMEOVER;
+            clearInterval(timerInterval);
+        }
+    }, 1000);
+}
+
+function updateCamera() {
+    // 目標是讓玩家在畫面中心
+    let targetX = player.x * cellSize + cellSize / 2 - canvasWidth / 2;
+    let targetY = player.y * cellSize + cellSize / 2 - canvasHeight / 2;
+
+    // 簡單的平滑移動 (lerp)
+    camera.x += (targetX - camera.x) * 0.1;
+    camera.y += (targetY - camera.y) * 0.1;
+
+    // 限制攝影機不要移出迷宮邊界 (可選，視需求決定是否要看到黑色邊緣)
+    // let maxCamX = cols * cellSize - canvasWidth;
+    // let maxCamY = rows * cellSize - canvasHeight;
+    // camera.x = Math.max(0, Math.min(camera.x, maxCamX));
+    // camera.y = Math.max(0, Math.min(camera.y, maxCamY));
+}
+
+function checkEvents() {
+    for (let i = 0; i < items.length; i++) {
+        if (items[i].active && items[i].x === player.x && items[i].y === player.y) {
+            items[i].active = false;
+            score += 100;
+        }
+    }
+    if (player.x === exit.x && player.y === exit.y) {
+        currentState = STATE.WIN;
+        clearInterval(timerInterval);
+    }
+}
+
+function spawnItems() {
+    items = [];
+    let count = 15; // 固定物品數量
+    for(let i=0; i<count; i++) {
+        let rx, ry;
+        do {
+            rx = Math.floor(Math.random() * cols);
+            ry = Math.floor(Math.random() * rows);
+        } while (grid[ry][rx].walls || (rx === player.x && ry === player.y) || (rx === exit.x && ry === exit.y));
+        
+        let type = Math.floor(Math.random() * 3);
+        items.push({x: rx, y: ry, type: type, active: true});
+    }
+}
+
+function resetGame() {
+    currentState = STATE.MENU;
+    selectedChar = null;
+}
+
+// --- 繪圖函數 ---
+function drawMenu() {
+    ctx.textAlign = 'center';
+    ctx.fillStyle = COLORS.uiText;
+    ctx.font = '24px monospace';
+    ctx.fillText("媽媽的地鐵迷宮冒險", canvasWidth/2, 80);
+    ctx.font = '16px monospace';
+    ctx.fillText("請選擇角色", canvasWidth/2, 130);
+
+    let drawX = canvasWidth / 2 - 120;
+    let drawY = 180;
+    let size = 80;
+
+    // A框
+    ctx.strokeStyle = selectedChar === 'A' ? COLORS.highlight : '#555';
+    ctx.lineWidth = 4;
+    ctx.strokeRect(drawX, drawY, size, size);
+    drawCharacter(drawX + size/2, drawY + size/2, 'A', size * 0.8);
+
+    // B框
+    ctx.strokeStyle = selectedChar === 'B' ? COLORS.highlight : '#555';
+    ctx.strokeRect(drawX + 160, drawY, size, size);
+    drawCharacter(drawX + 160 + size/2, drawY + size/2, 'B', size * 0.8);
+
+    if(selectedChar) {
+         ctx.fillStyle = COLORS.highlight;
+         ctx.fillText(`已選擇: 媽媽 ${selectedChar}`, canvasWidth/2, 320);
+         ctx.fillStyle = '#fff';
+         ctx.fillText("按 Enter 繼續", canvasWidth/2, 350);
+    }
+}
+
+function drawMazeSelect() {
+    ctx.textAlign = 'center';
+    ctx.fillStyle = COLORS.uiText;
+    ctx.font = '24px monospace';
+    ctx.fillText("選擇迷宮關卡", canvasWidth/2, 120);
+    
+    ctx.font = '20px monospace';
+    ctx.fillStyle = selectedMazeType === 'MAZE1' ? COLORS.highlight : '#777';
+    ctx.fillText("關卡 1 (方形迷宮)", canvasWidth/2, 200);
+    
+    ctx.fillStyle = selectedMazeType === 'MAZE2' ? COLORS.highlight : '#777';
+    ctx.fillText("關卡 2 (圓形迷宮)", canvasWidth/2, 250);
+    
+    ctx.fillStyle = '#fff';
+    ctx.font = '16px monospace';
+    ctx.fillText("Enter 開始遊戲", canvasWidth/2, 350);
+}
+
+function drawGame() {
+    ctx.save();
+    // 套用攝影機偏移
+    ctx.translate(-camera.x, -camera.y);
+
+    // 計算需要繪製的視野範圍 (優化效能，只畫看得到的)
+    let startCol = Math.floor(camera.x / cellSize) - 1;
+    let startRow = Math.floor(camera.y / cellSize) - 1;
+    let endCol = startCol + Math.ceil(canvasWidth / cellSize) + 2;
+    let endRow = startRow + Math.ceil(canvasHeight / cellSize) + 2;
+
+    startCol = Math.max(0, startCol); startRow = Math.max(0, startRow);
+    endCol = Math.min(cols, endCol); endRow = Math.min(rows, endRow);
+
+    for (let y = startRow; y < endRow; y++) {
+        for (let x = startCol; x < endCol; x++) {
+            let px = x * cellSize;
+            let py = y * cellSize;
+            
+            if (grid[y][x].walls) {
+                ctx.fillStyle = COLORS.wall;
+                ctx.fillRect(px, py, cellSize, cellSize);
+                ctx.strokeStyle = '#333'; ctx.lineWidth = 1;
+                ctx.strokeRect(px, py, cellSize, cellSize);
+            } else {
+                ctx.fillStyle = COLORS.floor;
+                ctx.fillRect(px, py, cellSize, cellSize);
+            }
+        }
+    }
+
+    // 繪製出口
+    ctx.fillStyle = COLORS.exit;
+    ctx.beginPath();
+    ctx.arc(exit.x * cellSize + cellSize/2, exit.y * cellSize + cellSize/2, cellSize/2, 0, Math.PI*2);
+    ctx.fill();
+    ctx.fillStyle = '#000';
+    ctx.font = `bold ${cellSize/2}px monospace`;
+    ctx.textAlign = 'center';
+    ctx.fillText("EXIT", exit.x * cellSize + cellSize/2, exit.y * cellSize + cellSize*0.6);
+
+    // 繪製物品
+    for (let item of items) {
+        if (item.active) {
+            drawItem(item.x * cellSize + cellSize/2, item.y * cellSize + cellSize/2, item.type, cellSize/2);
+        }
+    }
+
+    // 繪製玩家 (使用圖片)
+    drawCharacter(player.x * cellSize + cellSize/2, player.y * cellSize + cellSize/2, selectedChar, cellSize);
+
+    ctx.restore();
+}
+
+function drawItem(x, y, type, size) {
+    if (type === 0) {
+        ctx.fillStyle = '#33ccff'; ctx.fillRect(x-size/2, y-size/4, size, size/2); ctx.strokeStyle='#fff'; ctx.strokeRect(x-size/2, y-size/4, size, size/2);
+    } else if (type === 1) {
+        ctx.fillStyle = '#ffd700'; ctx.beginPath(); ctx.arc(x, y, size/2, 0, Math.PI*2); ctx.fill(); ctx.fillStyle = '#000'; ctx.beginPath(); ctx.arc(x, y, size/4, 0, Math.PI*2); ctx.fill();
+    } else {
+        ctx.fillStyle = '#e6e6fa'; ctx.beginPath(); ctx.moveTo(x, y-size/2); ctx.lineTo(x+size/2, y); ctx.lineTo(x, y+size/2); ctx.lineTo(x-size/2, y); ctx.fill();
+    }
+}
+
+function drawCharacter(x, y, charType, size) {
+    let img = charType === 'A' ? charAImg : charBImg;
+    // 確保圖片已載入
+    if (img.complete) {
+        // 將圖片繪製在中心點
+        ctx.drawImage(img, x - size/2, y - size/2, size, size);
+    } else {
+        // 圖片未載入時的備用方塊
+        ctx.fillStyle = charType === 'A' ? '#ff69b4' : '#4169e1';
+        ctx.fillRect(x - size/2, y - size/2, size, size);
+    }
+}
+
+function drawGameOver(win) {
+    ctx.fillStyle = 'rgba(0,0,0,0.8)';
+    ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+    
+    ctx.textAlign = 'center';
+    ctx.fillStyle = win ? COLORS.exit : '#FF0000';
+    ctx.font = '32px monospace';
+    
+    if (win) {
+        ctx.fillText("恭喜過關!", canvasWidth/2, 180);
+        ctx.fillStyle = '#fff';
+        ctx.font = '20px monospace';
+        ctx.fillText(`收集分數: ${score}`, canvasWidth/2, 230);
+        ctx.fillText(`剩餘時間: ${timeLeft}秒`, canvasWidth/2, 260);
+    } else {
+        ctx.fillText("時間到 / 失敗!", canvasWidth/2, 180);
+    }
+    
+    ctx.fillStyle = '#fff';
+    ctx.font = '20px monospace';
+    ctx.fillText("按 Enter 回到選單", canvasWidth/2, 330);
+}
+
+function updateTimerUI() {
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+    ctx.fillRect(0, 0, canvasWidth, 40);
+    ctx.fillStyle = '#fff';
+    ctx.font = '16px monospace';
+    ctx.textAlign = 'left';
+    
+    let m = Math.floor(timeLeft / 60);
+    let s = timeLeft % 60;
+    let timeStr = `${m}:${s < 10 ? '0'+s : s}`;
+    
+    ctx.fillText(`TIME: ${timeStr}`, 20, 25);
+    ctx.textAlign = 'right';
+    ctx.fillText(`SCORE: ${score}`, canvasWidth - 20, 25);
+}
+
+// --- 迷宮生成算法 ---
+
+// 初始化網格為全牆壁
+function initGrid() {
+    grid = [];
+    for (let y = 0; y < rows; y++) {
+        let row = [];
+        for (let x = 0; x < cols; x++) {
+            row.push({ walls: true, visited: false });
+        }
+        grid.push(row);
+    }
+}
+
+// Maze 1: 方形迷宮 (使用 DFS Backtracking 生成完美迷宮)
+function generateSquareMaze() {
+    initGrid();
+    let stack = [];
+    let startX = 1, startY = 1; // 從 (1,1) 開始確保有外牆
+    grid[startY][startX].visited = true;
+    grid[startY][startX].walls = false;
+    stack.push({x: startX, y: startY});
+
+    while(stack.length > 0) {
+        let current = stack.pop();
+        let neighbors = [];
+        let dirs = [[0,-2], [0,2], [-2,0], [2,0]]; // 檢查跨兩格的鄰居
+
+        for(let dir of dirs) {
+            let nx = current.x + dir[0];
+            let ny = current.y + dir[1];
+            if(nx > 0 && nx < cols-1 && ny > 0 && ny < rows-1 && !grid[ny][nx].visited) {
+                neighbors.push({x: nx, y: ny, dx: dir[0]/2, dy: dir[1]/2});
+            }
+        }
+
+        if(neighbors.length > 0) {
+            stack.push(current);
+            let next = neighbors[Math.floor(Math.random() * neighbors.length)];
+            // 打通中間的牆
+            grid[current.y + next.dy][current.x + next.dx].walls = false;
+            // 標記新格子
+            grid[next.y][next.x].visited = true;
+            grid[next.y][next.x].walls = false;
+            stack.push({x: next.x, y: next.y});
+        }
+    }
+
+    // 設定起點和終點 (參考 Maze1，起點在上方，終點在下方)
+    player.x = Math.floor(cols / 2); player.y = 1;
+    grid[player.y][player.x].walls = false;
+
+    exit.x = Math.floor(cols / 2); exit.y = rows - 2;
+    grid[exit.y][exit.x].walls = false;
+}
+
+// Maze 2: 圓形迷宮 (模擬)
+function generateCircularMaze() {
+    initGrid();
+    let centerX = Math.floor(cols / 2);
+    let centerY = Math.floor(rows / 2);
+    let maxRadius = Math.min(centerX, centerY) - 2;
+
+    // 1. 先挖空一個圓形區域
+    for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+            let dist = Math.sqrt((x - centerX)**2 + (y - centerY)**2);
+            if (dist <= maxRadius) {
+                grid[y][x].walls = false;
+            }
+        }
+    }
+
+    // 2. 在圓形區域內隨機生成一些牆壁，增加複雜度 (簡化版)
+    for (let y = 2; y < rows - 2; y++) {
+        for (let x = 2; x < cols - 2; x++) {
+             let dist = Math.sqrt((x - centerX)**2 + (y - centerY)**2);
+             // 隨機加牆，但避開中心和太靠近邊緣的區域
+             if (dist < maxRadius - 2 && dist > 3 && Math.random() > 0.7) {
+                 grid[y][x].walls = true;
+             }
+        }
+    }
+
+    // 設定起點在中心
+    player.x = centerX; player.y = centerY;
+    // 確保起點周圍是空的
+    for(let dy=-1; dy<=1; dy++) {
+        for(let dx=-1; dx<=1; dx++) {
+            grid[centerY+dy][centerX+dx].walls = false;
+        }
+    }
+
+    // 設定出口在圓周上
+    let angle = Math.random() * Math.PI * 2;
+    exit.x = Math.floor(centerX + Math.cos(angle) * (maxRadius - 1));
+    exit.y = Math.floor(centerY + Math.sin(angle) * (maxRadius - 1));
+    grid[exit.y][exit.x].walls = false;
+}
+
+// 啟動
+init();
+
+</script>
+</body>
+</html>
