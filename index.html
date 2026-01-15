@@ -2,7 +2,7 @@
 <html lang="zh-TW">
 <head>
 <meta charset="UTF-8">
-<title>地鐵迷宮大冒險 - 難度選擇版</title>
+<title>地鐵迷宮大冒險 - 介面優化版</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <style>
     body {
@@ -22,53 +22,61 @@
     }
     #game-container {
         position: relative;
-        width: 640px;
-        height: 640px;
-        max-width: 100vw;
-        max-height: 80vh; 
+        width: 95vw;
+        height: 85vh; 
+        max-width: 100%;
+        max-height: 100%;
         cursor: pointer;
+        box-shadow: 0 0 30px rgba(0,0,0,0.5);
+        border-radius: 8px;
+        overflow: hidden;
     }
     canvas {
         background-color: #000;
-        border: 4px solid #555;
+        border: 2px solid #555;
         image-rendering: pixelated;
-        box-shadow: 0 0 20px rgba(0,0,0,0.8);
         width: 100%;
         height: 100%;
         display: block;
     }
     #ui-layer {
-        margin-top: 10px;
+        margin-top: 5px;
         text-align: center;
         color: #aaa;
         font-size: 14px;
         position: relative;
         width: 100%;
-        max-width: 640px;
+        height: 5vh;
         display: flex;
         justify-content: center;
         align-items: center;
+        gap: 15px;
+    }
+    .rescue-status {
+        color: #00ff00;
+        font-weight: bold;
     }
 
+    /* 修改：將速度控制器移至右下角，避免與右上角的分數重疊 */
     #speed-control {
         position: absolute;
-        top: 10px;
-        right: 10px;
+        bottom: 20px; /* 改為 bottom */
+        right: 20px;  /* 保持 right */
         background: rgba(0, 0, 0, 0.7);
-        padding: 5px 10px;
-        border-radius: 15px;
+        padding: 8px 15px;
+        border-radius: 20px;
         border: 1px solid #777;
         z-index: 200;
         display: flex;
         align-items: center;
-        gap: 8px;
+        gap: 10px;
     }
     #speed-control label {
-        font-size: 12px;
+        font-size: 14px;
         color: #ffcc00;
     }
     #speed-slider {
-        width: 80px;
+        width: 100px;
         accent-color: #ffcc00;
         cursor: pointer;
     }
@@ -77,17 +85,19 @@
         color: #fff;
         min-width: 20px;
         text-align: right;
+        font-size: 14px;
     }
 </style>
 </head>
 <body>
 
 <div id="ui-layer">
-    <p>全程點擊操作 | 移動限制 15 步內</p>
+    <p>救出所有人(👦👧🧔)才能離開!</p>
+    <p id="rescue-display" class="rescue-status">救援: 0/3</p>
 </div>
 
 <div id="game-container">
-    <canvas id="gameCanvas" width="640" height="480"></canvas>
+    <canvas id="gameCanvas"></canvas>
     
     <div id="speed-control">
         <label>速度</label>
@@ -110,16 +120,14 @@ bgm.volume = 0.5;
 // --- 遊戲變數 ---
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
-let canvasWidth = canvas.width;
-let canvasHeight = canvas.height;
+let canvasWidth = 0;
+let canvasHeight = 0;
 
-// 新增 DIFF_SELECT 狀態
-const STATE = { MENU: 0, DIFF_SELECT: 1, LUCK_SELECT: 2, MAZE_SELECT: 3, PLAYING: 4, GAMEOVER: 5, WIN: 6 };
+const STATE = { MENU: 0, LUCK_SELECT: 1, MAZE_SELECT: 2, PLAYING: 3, GAMEOVER: 4, WIN: 5 };
 let currentState = STATE.MENU;
 
 let selectedChar = null;
-let selectedDifficulty = 'PENALTY'; // 'PENALTY' (有扣分) or 'SAFE' (無扣分)
-let selectedLuck = 'NORMAL';
+let selectedLuck = 'NORMAL'; 
 let selectedMazeType = 'MAZE1'; 
 let score = 0;
 let timeLeft = 180;
@@ -131,7 +139,9 @@ let cols, rows;
 let grid = [];
 let player = { x: 0, y: 0, pixelX: 0, pixelY: 0 }; 
 let exit = { x: 0, y: 0 };
-let items = [];
+let items = []; // 寶物與障礙物
+let familyItems = []; // 等待救援的家人
+let snakeBody = [];   // 跟隨者
 let camera = { x: 0, y: 0 }; 
 
 // 尋路與移動
@@ -142,9 +152,10 @@ let targetMarker = null;
 
 // 視覺特效
 let damageFlashTimer = 0;
+let exitWarningTimer = 0;
 
 // 限制設定
-const MAX_PATH_DISTANCE = 25; 
+const MAX_PATH_DISTANCE = 30; 
 
 // 配色
 let currentColors = {
@@ -154,15 +165,16 @@ let currentColors = {
 
 const TREASURES = ['👜', '💍', '⌚', '📿', '🧈']; 
 const OBSTACLES = ['💩', '😭']; 
+const FAMILY_TYPES = [
+    { id: 'kidA', icon: '👦' },
+    { id: 'kidB', icon: '👧' },
+    { id: 'husband', icon: '🧔' }
+];
 
 // UI 按鈕區域
 const UI_AREAS = {
     CHAR_A: { x: 0, y: 0, w: 0, h: 0 },
     CHAR_B: { x: 0, y: 0, w: 0, h: 0 },
-    // 難度選擇區域
-    DIFF_YES: { x: 0, y: 0, w: 0, h: 0 },
-    DIFF_NO: { x: 0, y: 0, w: 0, h: 0 },
-    // 幸運與關卡
     LUCK_HIGH: { x: 0, y: 0, w: 0, h: 0 },
     LUCK_NORMAL: { x: 0, y: 0, w: 0, h: 0 },
     MAZE_1: { x: 0, y: 0, w: 0, h: 0 },
@@ -189,12 +201,9 @@ function resizeCanvas() {
     // 角色
     UI_AREAS.CHAR_A = { x: cx - 120, y: 180, w: 80, h: 80 };
     UI_AREAS.CHAR_B = { x: cx + 40, y: 180, w: 80, h: 80 };
-    // 難度
-    UI_AREAS.DIFF_YES = { x: cx - 150, y: 180, w: 300, h: 50 };
-    UI_AREAS.DIFF_NO = { x: cx - 150, y: 250, w: 300, h: 50 };
-    // 幸運
-    UI_AREAS.LUCK_HIGH = { x: cx - 150, y: 180, w: 300, h: 50 };
-    UI_AREAS.LUCK_NORMAL = { x: cx - 150, y: 250, w: 300, h: 50 };
+    // 模式
+    UI_AREAS.LUCK_HIGH = { x: cx - 180, y: 180, w: 360, h: 50 };
+    UI_AREAS.LUCK_NORMAL = { x: cx - 180, y: 250, w: 360, h: 50 };
     // 關卡
     UI_AREAS.MAZE_1 = { x: cx - 150, y: 180, w: 300, h: 40 };
     UI_AREAS.MAZE_2 = { x: cx - 150, y: 230, w: 300, h: 40 };
@@ -220,6 +229,7 @@ function setupControls() {
         let clientX = e.touches ? e.touches[0].clientX : e.clientX;
         let clientY = e.touches ? e.touches[0].clientY : e.clientY;
         const rect = canvas.getBoundingClientRect();
+        
         const scaleX = canvas.width / rect.width;
         const scaleY = canvas.height / rect.height;
         const uiX = (clientX - rect.left) * scaleX;
@@ -227,12 +237,8 @@ function setupControls() {
 
         switch (currentState) {
             case STATE.MENU:
-                if (isInside(uiX, uiY, UI_AREAS.CHAR_A)) { selectedChar = 'A'; currentState = STATE.DIFF_SELECT; } 
-                else if (isInside(uiX, uiY, UI_AREAS.CHAR_B)) { selectedChar = 'B'; currentState = STATE.DIFF_SELECT; }
-                break;
-            case STATE.DIFF_SELECT:
-                if (isInside(uiX, uiY, UI_AREAS.DIFF_YES)) { selectedDifficulty = 'PENALTY'; currentState = STATE.LUCK_SELECT; } 
-                else if (isInside(uiX, uiY, UI_AREAS.DIFF_NO)) { selectedDifficulty = 'SAFE'; currentState = STATE.LUCK_SELECT; }
+                if (isInside(uiX, uiY, UI_AREAS.CHAR_A)) { selectedChar = 'A'; currentState = STATE.LUCK_SELECT; } 
+                else if (isInside(uiX, uiY, UI_AREAS.CHAR_B)) { selectedChar = 'B'; currentState = STATE.LUCK_SELECT; }
                 break;
             case STATE.LUCK_SELECT:
                 if (isInside(uiX, uiY, UI_AREAS.LUCK_HIGH)) { selectedLuck = 'HIGH'; currentState = STATE.MAZE_SELECT; } 
@@ -267,15 +273,44 @@ function isInside(x, y, rect) {
 
 function handleGameClick(targetGridX, targetGridY) {
     if (targetGridX >= 0 && targetGridX < cols && targetGridY >= 0 && targetGridY < rows) {
+        let finalX = targetGridX;
+        let finalY = targetGridY;
+        let isValidTarget = false;
+
         if (!grid[targetGridY][targetGridX].walls) {
-            const calculatedPath = calculatePath(Math.round(player.x), Math.round(player.y), targetGridX, targetGridY);
+            isValidTarget = true;
+        } else {
+            let found = false;
+            let minDist = Infinity;
+            for(let dy = -1; dy <= 1; dy++) {
+                for(let dx = -1; dx <= 1; dx++) {
+                    let nx = targetGridX + dx;
+                    let ny = targetGridY + dy;
+                    if (nx >= 0 && nx < cols && ny >= 0 && ny < rows) {
+                        if (!grid[ny][nx].walls) {
+                            let dist = Math.abs(dx) + Math.abs(dy);
+                            if (dist < minDist) {
+                                minDist = dist;
+                                finalX = nx;
+                                finalY = ny;
+                                found = true;
+                            }
+                        }
+                    }
+                }
+            }
+            if (found) isValidTarget = true;
+        }
+
+        if (isValidTarget) {
+            const calculatedPath = calculatePath(Math.round(player.x), Math.round(player.y), finalX, finalY);
             if (calculatedPath && calculatedPath.length > 0) {
                 if (calculatedPath.length <= MAX_PATH_DISTANCE) {
                     path = calculatedPath;
                     isMoving = true;
-                    targetMarker = { x: targetGridX, y: targetGridY, time: 20, color: '#ffffff', text: '' };
+                    targetMarker = { x: finalX, y: finalY, time: 20, color: '#ffffff', text: '' };
                 } else {
-                    targetMarker = { x: targetGridX, y: targetGridY, time: 30, color: '#ff0000', text: '太遠了!' };
+                    targetMarker = { x: finalX, y: finalY, time: 30, color: '#ff0000', text: '太遠了!' };
                 }
             }
         }
@@ -331,11 +366,16 @@ function startGame() {
     spawnItems();
     
     score = 0; timeLeft = 180; currentState = STATE.PLAYING;
-    path = []; isMoving = false; damageFlashTimer = 0;
+    path = []; isMoving = false; damageFlashTimer = 0; exitWarningTimer = 0;
+    snakeBody = []; 
+    
     player.pixelX = player.x * cellSize;
     player.pixelY = player.y * cellSize;
     camera.x = player.pixelX + cellSize/2 - canvasWidth/2;
     camera.y = player.pixelY + cellSize/2 - canvasHeight/2;
+    
+    updateRescueUI();
+
     if (timerInterval) clearInterval(timerInterval);
     timerInterval = setInterval(() => {
         timeLeft--;
@@ -355,18 +395,16 @@ function generateRandomColors() {
 
 function spawnItems() {
     items = [];
+    familyItems = [];
     let treasureCount = (selectedMazeType === 'MAZE3') ? 40 : 15;
-    let obstacleCount = 0; // 預設為 0
+    let obstacleCount = 0; 
 
-    // 只有在 "有扣分" (PENALTY) 模式下才計算障礙物數量
-    if (selectedDifficulty === 'PENALTY') {
-        obstacleCount = 5;
-        if (selectedLuck === 'HIGH') { 
-            obstacleCount = 10; 
-        }
+    if (selectedLuck === 'HIGH') {
+        treasureCount *= 2; 
+        obstacleCount = 10; 
+    } else {
+        obstacleCount = 0;
     }
-
-    if (selectedLuck === 'HIGH') { treasureCount *= 2; }
     
     // 生成寶物
     for(let i=0; i<treasureCount; i++) {
@@ -375,11 +413,26 @@ function spawnItems() {
         items.push({x: pos.x, y: pos.y, icon: icon, type: 'GOOD', value: 100, active: true});
     }
     
-    // 生成障礙物 (若為 SAFE 模式，obstacleCount 為 0，不會進入此迴圈)
+    // 生成障礙物
     for(let i=0; i<obstacleCount; i++) {
         let pos = getRandomEmptyPos();
         let icon = OBSTACLES[Math.floor(Math.random() * OBSTACLES.length)];
-        items.push({x: pos.x, y: pos.y, icon: icon, type: 'BAD', value: -500, active: true});
+        items.push({
+            x: pos.x, y: pos.y, icon: icon, type: 'BAD', value: -500, active: true,
+            lastMoveTime: Date.now() + Math.random() * 1000
+        });
+    }
+
+    // 生成家人
+    for(let member of FAMILY_TYPES) {
+        let pos = getRandomEmptyPos();
+        familyItems.push({
+            x: pos.x, 
+            y: pos.y, 
+            icon: member.icon, 
+            type: 'FAMILY', 
+            active: true
+        });
     }
 }
 
@@ -388,8 +441,37 @@ function getRandomEmptyPos() {
     do { 
         rx = Math.floor(Math.random() * cols); 
         ry = Math.floor(Math.random() * rows);
-    } while (grid[ry][rx].walls || (rx === player.x && ry === player.y) || (rx === exit.x && ry === exit.y));
+        var collision = false;
+        if(rx === player.x && ry === player.y) collision = true;
+        if(rx === exit.x && ry === exit.y) collision = true;
+        for(let it of items) if(it.x === rx && it.y === ry) collision = true;
+        for(let fm of familyItems) if(fm.x === rx && fm.y === ry) collision = true;
+    } while (grid[ry][rx].walls || collision);
     return {x: rx, y: ry};
+}
+
+function updateObstacleMovement() {
+    const now = Date.now();
+    for (let item of items) {
+        if (item.active && item.type === 'BAD') {
+            if (now - item.lastMoveTime > 800) {
+                item.lastMoveTime = now;
+                const dirs = [[0,1], [0,-1], [1,0], [-1,0]];
+                dirs.sort(() => Math.random() - 0.5);
+                for (let dir of dirs) {
+                    let nx = item.x + dir[0];
+                    let ny = item.y + dir[1];
+                    if (nx >= 0 && nx < cols && ny >= 0 && ny < rows && !grid[ny][nx].walls) {
+                        if (nx === exit.x && ny === exit.y) continue;
+                        item.x = nx;
+                        item.y = ny;
+                        checkEvents(); 
+                        break; 
+                    }
+                }
+            }
+        }
+    }
 }
 
 function updateCharacterMovement() {
@@ -400,24 +482,54 @@ function updateCharacterMovement() {
         let dx = targetPixelX - player.pixelX;
         let dy = targetPixelY - player.pixelY;
         let dist = Math.sqrt(dx*dx + dy*dy);
+
         if (dist <= moveSpeed) {
+            let prevX = player.x;
+            let prevY = player.y;
+
             player.pixelX = targetPixelX;
             player.pixelY = targetPixelY;
             player.x = nextNode.x;
             player.y = nextNode.y;
             path.shift();
+
+            let targetForNext = {x: prevX, y: prevY};
+
+            for (let i = 0; i < snakeBody.length; i++) {
+                let member = snakeBody[i];
+                let currentMemberX = member.x;
+                let currentMemberY = member.y;
+                member.x = targetForNext.x;
+                member.y = targetForNext.y;
+                member.targetPixelX = member.x * cellSize;
+                member.targetPixelY = member.y * cellSize;
+                targetForNext = {x: currentMemberX, y: currentMemberY};
+            }
             checkEvents();
         } else {
             player.pixelX += (dx / dist) * moveSpeed;
             player.pixelY += (dy / dist) * moveSpeed;
-            player.x = player.pixelX / cellSize;
-            player.y = player.pixelY / cellSize;
         }
         isMoving = true;
     } else {
         isMoving = false;
         player.pixelX = player.x * cellSize;
         player.pixelY = player.y * cellSize;
+    }
+
+    for (let member of snakeBody) {
+        if (member.targetPixelX !== undefined) {
+            let mdx = member.targetPixelX - member.pixelX;
+            let mdy = member.targetPixelY - member.pixelY;
+            let mDist = Math.sqrt(mdx*mdx + mdy*mdy);
+            if (mDist > moveSpeed) {
+                member.pixelX += (mdx / mDist) * moveSpeed;
+                member.pixelY += (mdy / mDist) * moveSpeed;
+            } else {
+                member.pixelX = member.targetPixelX;
+                member.pixelY = member.targetPixelY;
+            }
+        }
     }
 }
 
@@ -431,6 +543,7 @@ function updateCamera() {
 function checkEvents() {
     let checkX = Math.round(player.x);
     let checkY = Math.round(player.y);
+
     for (let i = 0; i < items.length; i++) {
         if (items[i].active && items[i].x === checkX && items[i].y === checkY) {
             items[i].active = false; 
@@ -440,19 +553,53 @@ function checkEvents() {
             }
         }
     }
+
+    for (let i = 0; i < familyItems.length; i++) {
+        if (familyItems[i].active && familyItems[i].x === checkX && familyItems[i].y === checkY) {
+            familyItems[i].active = false;
+            let newMember = {
+                icon: familyItems[i].icon,
+                x: player.x,
+                y: player.y,
+                pixelX: player.pixelX,
+                pixelY: player.pixelY,
+                targetPixelX: player.pixelX,
+                targetPixelY: player.pixelY
+            };
+            snakeBody.push(newMember);
+            score += 500;
+            updateRescueUI();
+        }
+    }
+
     if (checkX === exit.x && checkY === exit.y) {
-        currentState = STATE.WIN; clearInterval(timerInterval);
+        if (snakeBody.length === 3) {
+            currentState = STATE.WIN; 
+            clearInterval(timerInterval);
+        } else {
+            exitWarningTimer = 60; 
+        }
+    }
+}
+
+function updateRescueUI() {
+    const display = document.getElementById('rescue-display');
+    display.textContent = `救援: ${snakeBody.length}/3`;
+    if (snakeBody.length === 3) {
+        display.style.color = '#00ffff'; 
+        display.textContent += " (快去出口!)";
     }
 }
 
 function resetGame() { 
-    currentState = STATE.MENU; selectedChar = null; selectedLuck = 'NORMAL'; selectedDifficulty = 'PENALTY';
+    currentState = STATE.MENU; selectedChar = null; selectedLuck = 'NORMAL';
     bgm.pause(); bgm.currentTime = 0;
 }
 
 function gameLoop() {
     if (currentState === STATE.PLAYING) {
         updateCharacterMovement();
+        updateObstacleMovement();
         updateCamera();
     }
     const speedCtrl = document.getElementById('speed-control');
@@ -463,7 +610,6 @@ function gameLoop() {
 
     switch (currentState) {
         case STATE.MENU: drawMenu(); break;
-        case STATE.DIFF_SELECT: drawDifficultySelect(); break; // 新增
         case STATE.LUCK_SELECT: drawLuckSelect(); break;
         case STATE.MAZE_SELECT: drawMazeSelect(); break;
         case STATE.PLAYING:
@@ -478,7 +624,7 @@ function gameLoop() {
 
 function drawMenu() {
     ctx.textAlign = 'center'; ctx.fillStyle = currentColors.uiText;
-    ctx.font = '24px monospace'; ctx.fillText("媽媽的地鐵迷宮冒險", canvasWidth/2, 80);
+    ctx.font = '24px monospace'; ctx.fillText("媽媽的地鐵迷宮大冒險", canvasWidth/2, 80);
     ctx.font = '16px monospace'; ctx.fillText("請點擊下方角色", canvasWidth/2, 130);
     drawClickableRect(UI_AREAS.CHAR_A, selectedChar === 'A');
     drawClickableRect(UI_AREAS.CHAR_B, selectedChar === 'B');
@@ -489,19 +635,11 @@ function drawMenu() {
     ctx.fillText("角色 B", UI_AREAS.CHAR_B.x + 40, UI_AREAS.CHAR_B.y + 100);
 }
 
-// 新增：繪製難度選擇介面
-function drawDifficultySelect() {
-    ctx.textAlign = 'center'; ctx.fillStyle = currentColors.uiText;
-    ctx.font = '24px monospace'; ctx.fillText("選擇遊戲難度", canvasWidth/2, 120);
-    drawButton(UI_AREAS.DIFF_YES, "有扣分 (挑戰模式)", '#ff7733');
-    drawButton(UI_AREAS.DIFF_NO, "無扣分 (安全模式)", '#3377ff');
-}
-
 function drawLuckSelect() {
     ctx.textAlign = 'center'; ctx.fillStyle = currentColors.uiText;
-    ctx.font = '24px monospace'; ctx.fillText("選擇寶物數量", canvasWidth/2, 120);
-    drawButton(UI_AREAS.LUCK_HIGH, "好多寶物 (高風險)", '#ff5555');
-    drawButton(UI_AREAS.LUCK_NORMAL, "一般數量 (標準)", '#44cc44');
+    ctx.font = '24px monospace'; ctx.fillText("選擇遊戲模式", canvasWidth/2, 120);
+    drawButton(UI_AREAS.LUCK_HIGH, "好多寶物 (有扣分+巡邏怪)", '#ff5555');
+    drawButton(UI_AREAS.LUCK_NORMAL, "一般寶物 (安全模式)", '#44cc44');
 }
 
 function drawMazeSelect() {
@@ -529,10 +667,13 @@ function drawClickableRect(rect, isSelected) {
 
 function drawGame() {
     ctx.save(); ctx.translate(-camera.x, -camera.y);
-    let startCol = Math.floor(camera.x / cellSize) - 1; let startRow = Math.floor(camera.y / cellSize) - 1;
-    let endCol = startCol + Math.ceil(canvasWidth / cellSize) + 2; let endRow = startRow + Math.ceil(canvasHeight / cellSize) + 2;
+    let startCol = Math.floor(camera.x / cellSize) - 1; 
+    let startRow = Math.floor(camera.y / cellSize) - 1;
+    let endCol = startCol + Math.ceil(canvasWidth / cellSize) + 2; 
+    let endRow = startRow + Math.ceil(canvasHeight / cellSize) + 2;
     startCol = Math.max(0, startCol); startRow = Math.max(0, startRow); endCol = Math.min(cols, endCol); endRow = Math.min(rows, endRow);
     
+    // 1. 繪製迷宮
     for (let y = startRow; y < endRow; y++) {
         for (let x = startCol; x < endCol; x++) {
             let px = x * cellSize; let py = y * cellSize;
@@ -545,6 +686,7 @@ function drawGame() {
         }
     }
 
+    // 2. 路徑點
     if (path.length > 0) {
         ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
         for (let p of path) {
@@ -552,6 +694,7 @@ function drawGame() {
         }
     }
 
+    // 3. 目標標記
     if (targetMarker) {
         ctx.strokeStyle = targetMarker.color; ctx.lineWidth = 2;
         let r = 10 + Math.sin(Date.now() / 100) * 5;
@@ -563,17 +706,68 @@ function drawGame() {
         targetMarker.time--; if (targetMarker.time <= 0) targetMarker = null;
     }
 
+    // 4. 出口
     ctx.fillStyle = currentColors.exit; ctx.beginPath(); ctx.arc(exit.x * cellSize + cellSize/2, exit.y * cellSize + cellSize/2, cellSize/2, 0, Math.PI*2); ctx.fill();
     ctx.fillStyle = '#000'; ctx.font = `bold ${cellSize/2}px monospace`; ctx.textAlign = 'center'; ctx.fillText("EXIT", exit.x * cellSize + cellSize/2, exit.y * cellSize + cellSize*0.6);
     
+    // 5. 寶物與障礙物
     ctx.font = `${cellSize * 0.7}px Arial`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     for (let item of items) { 
         if (item.active) { ctx.fillText(item.icon, item.x * cellSize + cellSize/2, item.y * cellSize + cellSize/2 + 2); }
     }
     
+    // 6. 待救援的家人 (加入閃爍光圈)
+    for (let fm of familyItems) {
+        if (fm.active) { 
+            let fx = fm.x * cellSize + cellSize/2;
+            let fy = fm.y * cellSize + cellSize/2;
+
+            // 閃爍特效
+            let pulse = Math.abs(Math.sin(Date.now() / 300)); // 0~1 循環
+            let radius = cellSize/2 * (0.8 + 0.2 * pulse); // 半徑縮放
+
+            // 畫黃色光圈
+            ctx.beginPath();
+            ctx.arc(fx, fy, radius, 0, Math.PI*2);
+            ctx.strokeStyle = '#ffff00'; 
+            ctx.lineWidth = 3;
+            ctx.stroke();
+            // 半透明填充
+            ctx.fillStyle = `rgba(255, 255, 0, ${0.3 * pulse})`;
+            ctx.fill();
+
+            // 畫 Emoji
+            ctx.fillStyle = '#fff';
+            ctx.fillText(fm.icon, fx, fy + 2); 
+        }
+    }
+
+    // 7. 跟隨的家人
+    for (let i = snakeBody.length - 1; i >= 0; i--) {
+        let member = snakeBody[i];
+        ctx.save();
+        ctx.translate(member.pixelX + cellSize/2, member.pixelY + cellSize/2);
+        let wobble = Math.sin((Date.now() + i * 200) / 100) * 0.2; 
+        ctx.rotate(wobble);
+        ctx.fillText(member.icon, 0, 2); 
+        ctx.restore();
+    }
+
+    // 8. 主角
     drawCharacter(player.pixelX + cellSize/2, player.pixelY + cellSize/2, selectedChar, cellSize, isMoving);
+    
+    // 9. 出口警告
+    if (exitWarningTimer > 0) {
+        ctx.fillStyle = '#ff0000';
+        ctx.font = 'bold 20px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText("還有家人沒救到!", exit.x * cellSize + cellSize/2, exit.y * cellSize - 10);
+        exitWarningTimer--;
+    }
+
     ctx.restore();
 
+    // 10. 受傷紅光
     if (damageFlashTimer > 0) {
         ctx.fillStyle = `rgba(255, 0, 0, ${damageFlashTimer / 30})`; 
         ctx.fillRect(0, 0, canvasWidth, canvasHeight);
@@ -594,7 +788,7 @@ function drawGameOver(win) {
     ctx.fillStyle = 'rgba(0,0,0,0.8)'; ctx.fillRect(0, 0, canvasWidth, canvasHeight);
     ctx.textAlign = 'center'; ctx.fillStyle = win ? currentColors.exit : '#FF0000'; ctx.font = '32px monospace';
     if (win) {
-        ctx.fillText("恭喜過關!", canvasWidth/2, 180); ctx.fillStyle = '#fff'; ctx.font = '20px monospace';
+        ctx.fillText("恭喜全家團圓!", canvasWidth/2, 180); ctx.fillStyle = '#fff'; ctx.font = '20px monospace';
         ctx.fillText(`最終得分: ${score}`, canvasWidth/2, 230); ctx.fillText(`剩餘時間: ${timeLeft}秒`, canvasWidth/2, 260);
     } else { ctx.fillText("時間到 / 失敗!", canvasWidth/2, 180); }
     ctx.fillStyle = '#fff'; ctx.font = '20px monospace'; ctx.fillText("點擊任意處回到選單", canvasWidth/2, 330);
